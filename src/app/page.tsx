@@ -46,6 +46,8 @@ export default function TestDriveBookingPage() {
   const [car, setCar] = useState("");
   const [location, setLocation] = useState("");
 
+  const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001';
+
   // Filter bookings when selectedDate changes
   useEffect(() => {
     if (selectedDate) {
@@ -59,7 +61,7 @@ export default function TestDriveBookingPage() {
   const fetchBookings = async (date?: Date) => {
     try {
       const dateParam = date ? format(date, 'yyyy-MM-dd') : '';
-      const response = await fetch(`http://localhost:3001/api/bookings?date=${dateParam}`);
+      const response = await fetch(`${API_URL}/api/bookings?date=${dateParam}`);
       const data = await response.json();
       
       // Transform the data to match our Booking type
