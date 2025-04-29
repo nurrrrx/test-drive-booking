@@ -15,22 +15,44 @@ const port = process.env.PORT || 3001;
 app.use(cors());
 app.use(express.json());
 
-// Database connection
+// Database connection with improved error handling
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
-  ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false
+  ssl: {
+    rejectUnauthorized: false
+  }
 });
+
+// Test connection when the app starts
+(async () => {
+  try {
+    const client = await pool.connect();
+    console.log('Successfully connected to PostgreSQL database');
+    client.release();
+  } catch (err) {
+    console.error('Database connection error:', err.message);
+    // Log sanitized connection string (hiding password)
+    const sanitizedUrl = process.env.DATABASE_URL ? 
+      process.env.DATABASE_URL.replace(/:[^:]*@/, ':****@') : 
+      'No DATABASE_URL provided';
+    console.error('Connection string:', sanitizedUrl);
+  }
+})();
 
 // Error handling for unexpected database disconnections
 pool.on('error', (err) => {
-  console.error('Unexpected error on idle client', err);
-  process.exit(-1);
+  console.error('Unexpected database error:', err);
+  // Don't exit in production, as the connection might recover
+  if (process.env.NODE_ENV !== 'production') {
+    process.exit(-1);
+  }
 });
 
 // Database initialization
 async function initDb() {
+  let client;
   try {
-    const client = await pool.connect();
+    client = await pool.connect();
     await client.query(`
       CREATE TABLE IF NOT EXISTS bookings (
         id SERIAL PRIMARY KEY,
@@ -44,20 +66,31 @@ async function initDb() {
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       )
     `);
-    client.release();
     console.log('Database initialized successfully');
   } catch (error) {
     console.error('Error initializing database:', error);
+  } finally {
+    if (client) client.release();
   }
 }
 
 // Initialize database on startup
-initDb();
+initDb().catch(console.error);
+
+// Simple test endpoint
+app.get('/health', (req, res) => {
+  res.json({ 
+    status: 'UP', 
+    timestamp: new Date().toISOString(),
+    environment: process.env.NODE_ENV || 'development'
+  });
+});
 
 // API Routes
 
 // Get all bookings with optional date filter
 app.get('/api/bookings', async (req, res) => {
+  let client;
   try {
     const { date } = req.query;
     let query = 'SELECT * FROM bookings';
@@ -70,16 +103,20 @@ app.get('/api/bookings', async (req, res) => {
     
     query += ' ORDER BY time_slot';
     
-    const result = await pool.query(query, values);
+    client = await pool.connect();
+    const result = await client.query(query, values);
     res.json(result.rows);
   } catch (error) {
     console.error('Error fetching bookings:', error);
-    res.status(500).json({ error: 'Internal server error' });
+    res.status(500).json({ error: 'Internal server error', message: error.message });
+  } finally {
+    if (client) client.release();
   }
 });
 
 // Create a new booking
 app.post('/api/bookings', async (req, res) => {
+  let client;
   try {
     const { customerName, phoneNumber, date, timeSlot, car, location } = req.body;
     
@@ -88,7 +125,8 @@ app.post('/api/bookings', async (req, res) => {
       return res.status(400).json({ error: 'Missing required fields' });
     }
     
-    const result = await pool.query(
+    client = await pool.connect();
+    const result = await client.query(
       'INSERT INTO bookings (customer_name, phone_number, booking_date, time_slot, car, location) VALUES ($1, $2, $3, $4, $5, $6) RETURNING *',
       [customerName, phoneNumber, date, timeSlot, car, location || '']
     );
@@ -96,12 +134,15 @@ app.post('/api/bookings', async (req, res) => {
     res.status(201).json(result.rows[0]);
   } catch (error) {
     console.error('Error creating booking:', error);
-    res.status(500).json({ error: 'Internal server error' });
+    res.status(500).json({ error: 'Internal server error', message: error.message });
+  } finally {
+    if (client) client.release();
   }
 });
 
 // Update booking status
 app.patch('/api/bookings/:id', async (req, res) => {
+  let client;
   try {
     const { id } = req.params;
     const { status } = req.body;
@@ -110,7 +151,8 @@ app.patch('/api/bookings/:id', async (req, res) => {
       return res.status(400).json({ error: 'Invalid status value' });
     }
     
-    const result = await pool.query(
+    client = await pool.connect();
+    const result = await client.query(
       'UPDATE bookings SET status = $1 WHERE id = $2 RETURNING *',
       [status, id]
     );
@@ -122,16 +164,20 @@ app.patch('/api/bookings/:id', async (req, res) => {
     res.json(result.rows[0]);
   } catch (error) {
     console.error('Error updating booking:', error);
-    res.status(500).json({ error: 'Internal server error' });
+    res.status(500).json({ error: 'Internal server error', message: error.message });
+  } finally {
+    if (client) client.release();
   }
 });
 
 // Delete a booking (optional endpoint)
 app.delete('/api/bookings/:id', async (req, res) => {
+  let client;
   try {
     const { id } = req.params;
     
-    const result = await pool.query(
+    client = await pool.connect();
+    const result = await client.query(
       'DELETE FROM bookings WHERE id = $1 RETURNING *',
       [id]
     );
@@ -143,17 +189,14 @@ app.delete('/api/bookings/:id', async (req, res) => {
     res.json({ message: 'Booking deleted successfully' });
   } catch (error) {
     console.error('Error deleting booking:', error);
-    res.status(500).json({ error: 'Internal server error' });
+    res.status(500).json({ error: 'Internal server error', message: error.message });
+  } finally {
+    if (client) client.release();
   }
 });
 
-// Health check endpoint
-app.get('/health', (req, res) => {
-  res.json({ status: 'UP', timestamp: new Date() });
-});
-
 // Start the server
-app.listen(port, () => {
+app.listen(port, '0.0.0.0', () => {
   console.log(`Server running on port ${port}`);
   console.log(`Environment: ${process.env.NODE_ENV || 'development'}`);
 });
