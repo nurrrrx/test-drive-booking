@@ -1,7 +1,6 @@
 "use client"
 
 import React, { useState, useEffect } from "react";
-import { DefaultPageLayout } from "@/ui/layouts/DefaultPageLayout";
 import { Select } from "@/ui/components/Select";
 import { FeatherMap } from "@subframe/core";
 import { FeatherCar } from "@subframe/core";
@@ -19,9 +18,11 @@ import { IconButton } from "@/ui/components/IconButton";
 import { FeatherPlus } from "@subframe/core";
 import { TextField } from "@/ui/components/TextField";
 import { Accordion } from "@/ui/components/Accordion";
-import { DateButton } from "@/ui/components/DateButton";
 import * as SubframeCore from "@subframe/core";
 import { format } from "date-fns"; 
+
+// Set your API URL - ensure this is correctly configured in environment variables
+const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001';
 
 interface Booking {
   id: string;
@@ -38,6 +39,8 @@ export default function TestDriveBookingPage() {
   const [selectedDate, setSelectedDate] = useState<Date | undefined>(new Date());
   const [bookings, setBookings] = useState<Booking[]>([]);
   const [filteredBookings, setFilteredBookings] = useState<Booking[]>([]);
+  const [isLoading, setIsLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   
   // Form state
   const [customerName, setCustomerName] = useState("");
@@ -45,8 +48,6 @@ export default function TestDriveBookingPage() {
   const [timeSlot, setTimeSlot] = useState("09:00 AM");
   const [car, setCar] = useState("");
   const [location, setLocation] = useState("");
-
-  const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001';
 
   // Filter bookings when selectedDate changes
   useEffect(() => {
@@ -59,10 +60,20 @@ export default function TestDriveBookingPage() {
   }, [selectedDate, bookings]);
 
   const fetchBookings = async (date?: Date) => {
+    setIsLoading(true);
+    setError(null);
     try {
       const dateParam = date ? format(date, 'yyyy-MM-dd') : '';
+      console.log(`Fetching bookings from: ${API_URL}/api/bookings?date=${dateParam}`);
+      
       const response = await fetch(`${API_URL}/api/bookings?date=${dateParam}`);
+      
+      if (!response.ok) {
+        throw new Error(`API error: ${response.status} ${response.statusText}`);
+      }
+      
       const data = await response.json();
+      console.log('Received booking data:', data);
       
       // Transform the data to match our Booking type
       const formattedBookings: Booking[] = data.map((booking: any) => ({
@@ -79,6 +90,9 @@ export default function TestDriveBookingPage() {
       setBookings(formattedBookings);
     } catch (error) {
       console.error('Error fetching bookings:', error);
+      setError('Failed to load bookings. Please try again later.');
+    } finally {
+      setIsLoading(false);
     }
   };
 
@@ -93,6 +107,9 @@ export default function TestDriveBookingPage() {
       return;
     }
   
+    setIsLoading(true);
+    setError(null);
+    
     const bookingData = {
       customerName,
       phoneNumber,
@@ -103,15 +120,26 @@ export default function TestDriveBookingPage() {
     };
   
     try {
-      const response = await fetch('http://localhost:3001/api/bookings', {
+      console.log(`Submitting booking to: ${API_URL}/api/bookings`);
+      console.log('Booking data:', bookingData);
+      
+      const response = await fetch(`${API_URL}/api/bookings`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 
+          'Content-Type': 'application/json',
+          'Accept': 'application/json'
+        },
         body: JSON.stringify(bookingData)
       });
       
       if (!response.ok) {
-        throw new Error('Failed to create booking');
+        const errorText = await response.text();
+        console.error('Error response:', errorText);
+        throw new Error(`Failed to create booking: ${response.status} ${response.statusText}`);
       }
+      
+      const data = await response.json();
+      console.log('Success response:', data);
       
       // Refresh bookings
       fetchBookings(selectedDate);
@@ -125,14 +153,17 @@ export default function TestDriveBookingPage() {
       alert("Booking submitted successfully!");
     } catch (error) {
       console.error("Error submitting booking:", error);
+      setError('Failed to submit booking. Please try again.');
       alert("Failed to submit booking. Please try again.");
+    } finally {
+      setIsLoading(false);
     }
   };
   
   // Update the checkbox onChange handler
   const handleStatusChange = async (id: string, checked: boolean) => {
     try {
-      const response = await fetch(`http://localhost:3001/api/bookings/${id}`, {
+      const response = await fetch(`${API_URL}/api/bookings/${id}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ status: checked ? 'completed' : 'pending' })
@@ -146,6 +177,7 @@ export default function TestDriveBookingPage() {
       fetchBookings(selectedDate);
     } catch (error) {
       console.error('Error updating booking status:', error);
+      alert('Failed to update booking status. Please try again.');
     }
   };
   
@@ -180,13 +212,20 @@ export default function TestDriveBookingPage() {
   };
 
   return (
-    <DefaultPageLayout>
+    <div className="min-h-screen bg-default-background">
       <div className="container max-w-none flex h-full w-full flex-col items-start gap-6 bg-default-background py-12 overflow-auto">
         <div className="flex w-full items-start gap-6">
           <span className="grow shrink-0 basis-0 text-heading-1 font-heading-1 text-default-font">
             Hello Sam!
           </span>
         </div>
+        
+        {error && (
+          <div className="w-full bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded">
+            <p>{error}</p>
+          </div>
+        )}
+        
         <div className="flex w-full items-center gap-4">
           <span className="text-body-bold font-body-bold text-default-font">
             Filter by
@@ -212,12 +251,12 @@ export default function TestDriveBookingPage() {
               value={undefined}
               onValueChange={(value: string) => {}}
             >
-              <Select.Item value="Engineering">Han</Select.Item>
-              <Select.Item value="Design">Sealion</Select.Item>
-              <Select.Item value="Product">Seal</Select.Item>
-              <Select.Item value="Marketing">Atto 3</Select.Item>
-              <Select.Item value="Marketing">Song Plus</Select.Item>
-              <Select.Item value="Marketing">Qin Plus</Select.Item>
+              <Select.Item value="Han">Han</Select.Item>
+              <Select.Item value="Sealion">Sealion</Select.Item>
+              <Select.Item value="Seal">Seal</Select.Item>
+              <Select.Item value="Atto 3">Atto 3</Select.Item>
+              <Select.Item value="Song Plus">Song Plus</Select.Item>
+              <Select.Item value="Qin Plus">Qin Plus</Select.Item>
             </Select>
             <Select
               label=""
@@ -270,7 +309,11 @@ export default function TestDriveBookingPage() {
               </span>
             </div>
             <div className="flex w-full flex-col items-start">
-              {filteredBookings.length > 0 ? (
+              {isLoading ? (
+                <div className="flex w-full items-center justify-center p-4">
+                  <span className="text-body font-body text-subtext-color">Loading bookings...</span>
+                </div>
+              ) : filteredBookings.length > 0 ? (
                 filteredBookings.map((booking) => (
                   <div key={booking.id} className="flex w-full items-start gap-4 border-b border-solid border-neutral-border px-4 py-4">
                     <div className="flex flex-col items-start gap-1">
@@ -570,17 +613,17 @@ export default function TestDriveBookingPage() {
             </div>
             <div className="flex w-full items-center justify-between">
             <Button
-              disabled={false}
+              disabled={isLoading}
               variant="brand-primary"
               size="medium"
               onClick={handleSubmit}
             >
-              Submit a request
+              {isLoading ? "Submitting..." : "Submit a request"}
             </Button>
             </div>
           </div>
         </div>
       </div>
-    </DefaultPageLayout>  
+    </div>  
   );
 }
